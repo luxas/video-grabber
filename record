@@ -1,0 +1,80 @@
+#!/bin/bash
+
+set -e
+
+DEBUG=${DEBUG:-0}
+if [[ ${DEBUG} == 1 ]]; then
+	set -x
+fi
+
+VIDEOCODEC=${VIDEOCODEC:-libx265}
+AUDIOCODEC=${AUDIOCODEC:-aac}
+CRF=${CRF:-23}
+THREAD_QUEUE_SIZE=${THREAD_QUEUE_SIZE:-16384}
+DOCKER_IMAGE=${DOCKER_IMAGE:-luxas/ffmpeg:0.1.0}
+
+if [[ "$#" != "1" ]]; then
+cat <<EOF
+Hello and welcome to this script that may capture VHS videos by using a Terratec Grabby!
+
+You can run this script by invoking:
+./record <filename>
+
+Supported configuration parameters:
+ - You can override the video/audio codecs manually with VIDEOCODEC/AUDIOCODEC.
+   - Defaults to ${VIDEOCODEC}/${AUDIOCODEC}. For more information, see: https://trac.ffmpeg.org/wiki/Encode/H.265
+ - You can set the CRF quality of the encoding. For more information, see: https://trac.ffmpeg.org/wiki/Encode/H.264
+   - Defaults to ${CRF}
+ - You can set the thread queue size; a higher value allows for a higher bitrate, I think ;)
+   - Defaults to ${THREAD_QUEUE_SIZE}
+ - By default, the script will try to auto-detect which video/audio port your Terratec Grabby is using,
+     but you can override the audio/video capturing sources with VIDEODEV/AUDIODEV.
+ - And you can optionally set a timeout, given in how many seconds ffmpeg should encode before stopping
+
+By default, the ${DOCKER_IMAGE} image from Docker Hub will be used as the dockerized env. Customize with 
+By default this command runs dockerized, but you can disable that behavior by setting EXECUTE_COMMAND=1.
+If you want to turn on debugging output, set DEBUG=1.
+
+Have fun!
+
+EOF
+exit
+fi
+
+EXECUTE_COMMAND=${EXECUTE_COMMAND:-0}
+
+if [[ ${EXECUTE_COMMAND} == 0 ]]; then
+	VIDEODEVICES_TO_MOUNT=""
+	for videodev in $(ls /dev/video*); do VIDEODEVICES_TO_MOUNT="${VIDEODEVICES_TO_MOUNT} --device=${videodev}"; done
+
+	docker run -it ${VIDEODEVICES_TO_MOUNT} --device /dev/snd --group-add audio \
+		-v $(pwd):/vhs -w /vhs --privileged=true \
+		-e VIDEODEV=${VIDEODEV} -e AUDIODEV=${AUDIODEV} \
+		-e VIDEOCODEC=${VIDEOCODEC} -e AUDIOCODEC=${AUDIOCODEC} \
+		-e CRF=${CRF} -e THREAD_QUEUE_SIZE=${THREAD_QUEUE_SIZE} \
+		-e TIMEOUT=${TIMEOUT} -e EXECUTE_COMMAND=1 \
+		${DOCKER_IMAGE} $@
+fi
+
+FILENAME=$1
+DEFAULTVIDEODEV=$(v4l2-ctl --list-devices | grep Terratec -A1 | grep video | awk '{print $1}')
+DEFAULTAUDIODEV="hw:$(arecord -l | grep TerraTec | awk '{print $2}' | cut -c1)"
+
+VIDEODEV=${VIDEODEV:-${DEFAULTVIDEODEV}}
+AUDIODEV=${AUDIODEV:-${DEFAULTAUDIODEV}}
+TIMEOUT=${TIMEOUT:-}
+
+if [[ ${TIMEOUT} != "" ]]; then
+	TIMEOUT="-t ${TIMEOUT}"
+fi
+
+v4l2-ctl --device "${VIDEODEV}" --set-ctrl=mute=0
+
+set -x
+
+ffmpeg  -thread_queue_size ${THREAD_QUEUE_SIZE} -f v4l2 -i ${VIDEODEV} 
+		-thread_queue_size ${THREAD_QUEUE_SIZE} -f alsa -i ${AUDIODEV} \
+		-vcodec ${VIDEOCODEC} -acodec ${AUDIOCODEC} -crf ${CRF} ${TIMEOUT} \
+		${FILENAME}
+
+set +x
