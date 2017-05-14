@@ -4,5 +4,5 @@ VERSION?=0.1.0
 build:
 	docker build -t $(IMAGE):$(VERSION) .
 
-push:
+push: build
 	docker push $(IMAGE):$(VERSION)
