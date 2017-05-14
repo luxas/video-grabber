@@ -47,13 +47,17 @@ if [[ ${EXECUTE_COMMAND} == 0 ]]; then
 	VIDEODEVICES_TO_MOUNT=""
 	for videodev in $(ls /dev/video*); do VIDEODEVICES_TO_MOUNT="${VIDEODEVICES_TO_MOUNT} --device=${videodev}"; done
 
-	docker run -it ${VIDEODEVICES_TO_MOUNT} --device /dev/snd --group-add audio \
+	set -x
+	docker run -it ${VIDEODEVICES_TO_MOUNT} --device /dev/snd --device /dev/dri --group-add audio \
 		-v $(pwd):/vhs -w /vhs --privileged=true \
 		-e VIDEODEV=${VIDEODEV} -e AUDIODEV=${AUDIODEV} \
 		-e VIDEOCODEC=${VIDEOCODEC} -e AUDIOCODEC=${AUDIOCODEC} \
 		-e CRF=${CRF} -e THREAD_QUEUE_SIZE=${THREAD_QUEUE_SIZE} \
-		-e TIMEOUT=${TIMEOUT} -e EXECUTE_COMMAND=1 \
-		${DOCKER_IMAGE} $@
+		-e TIMEOUT=${TIMEOUT} -e HWACCELS=${HWACCELS} -e EXECUTE_COMMAND=1 \
+		${DOCKER_IMAGE} /vhs/record $@
+
+	set +x
+	exit
 fi
 
 FILENAME=$1
@@ -63,6 +67,7 @@ DEFAULTAUDIODEV="hw:$(arecord -l | grep TerraTec | awk '{print $2}' | cut -c1)"
 VIDEODEV=${VIDEODEV:-${DEFAULTVIDEODEV}}
 AUDIODEV=${AUDIODEV:-${DEFAULTAUDIODEV}}
 TIMEOUT=${TIMEOUT:-}
+HWACCELS=${HWACCELS:-}
 
 if [[ ${TIMEOUT} != "" ]]; then
 	TIMEOUT="-t ${TIMEOUT}"
@@ -72,7 +77,8 @@ v4l2-ctl --device "${VIDEODEV}" --set-ctrl=mute=0
 
 set -x
 
-ffmpeg  -thread_queue_size ${THREAD_QUEUE_SIZE} -f v4l2 -i ${VIDEODEV} 
+ffmpeg  ${HWACCELS} \
+		-thread_queue_size ${THREAD_QUEUE_SIZE} -f v4l2 -i ${VIDEODEV} \
 		-thread_queue_size ${THREAD_QUEUE_SIZE} -f alsa -i ${AUDIODEV} \
 		-vcodec ${VIDEOCODEC} -acodec ${AUDIOCODEC} -crf ${CRF} ${TIMEOUT} \
 		${FILENAME}
